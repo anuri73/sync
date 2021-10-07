@@ -17,4 +17,9 @@ object Shared {
         in.readFully(buf)
         upickle.default.readBinary[T](buf)
     }
+
+    def hashPath(p: os.Path): Option[Int] = {
+        if (!os.isFile(p)) None
+        else Some(java.util.Arrays.hashCode(os.read.bytes(p)))
+    }
 }

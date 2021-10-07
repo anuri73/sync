@@ -7,7 +7,9 @@ trait SyncModule extends ScalaModule {
 
     override def ivyDeps = Agg(
         ivy"com.lihaoyi::upickle:1.2.0",
-        ivy"com.lihaoyi::os-lib:0.7.1"
+        ivy"com.lihaoyi::os-lib:0.7.1",
+        ivy"com.lihaoyi::os-lib-watch:0.7.1",
+        ivy"com.lihaoyi::castor:0.1.7"
     )
 }
 

@@ -2,42 +2,48 @@ package sync
 
 object Sync {
     def main(args: Array[String]): Unit = {
-        val src = os.Path(args(0), os.pwd)
-        val dest = os.Path(args(1), os.pwd)
+        val (src, dest) = (os.Path(args(0), os.pwd), os.Path(args(1), os.pwd))
 
         val agentExecutable = os.temp(os.read.bytes(os.resource / "agent.jar"))
         os.perms.set(agentExecutable, "rwx------")
         val agent = os.proc(agentExecutable).spawn(cwd = dest)
 
-        def callAgent[T: upickle.default.Reader](rpc: Rpc): () => T = {
-            Shared.send(agent.stdin.data, rpc)
-            () => Shared.receive[T](agent.stdout.data)
-        }
+        sealed trait Message
+        case class ChangedPath(value: os.SubPath) extends Message
+        case class AgentResponse(value: Rpc.StatInfo) extends Message
 
-        val subPaths = os.walk(src).map(_.subRelativeTo(src))
+        import castor.Context.Simple.global
 
-        def pipelineCalls[T: upickle.default.Reader](rpcFor: os.SubPath => Option[Rpc]) = {
-            val buffer = collection.mutable.Buffer.empty[(os.RelPath, () => T)]
-            for (p <- subPaths; rpc <- rpcFor(p)) buffer.append((p, callAgent[T](rpc)))
-            buffer.map { case (k, v) => (k, v()) }.toMap
-        }
-
-        val existsMap = pipelineCalls[Boolean](p => Some(Rpc.Exists(p)))
-
-        val isDirMap = pipelineCalls[Boolean](p => Some(Rpc.IsDir(p)))
-
-        val readMap = pipelineCalls[Array[Byte]](p =>
-            if (existsMap(p) && !isDirMap(p)) Some(Rpc.ReadBytes(p))
-            else None
-        )
-
-        pipelineCalls[Unit] { p =>
-            if (os.isDir(src / p)) None
-            else {
-                val localBytes = os.read.bytes(src / p)
-                if (readMap.get(p).exists(java.util.Arrays.equals(_, localBytes))) None
-                else Some(Rpc.WriteOver(localBytes, p))
+        object SyncActor extends castor.SimpleActor[Message] {
+            def run(message: Message): Unit = {
+                println("Sync actor handling: ", message)
+                message match {
+                    case ChangedPath(value) => Shared.send(agent.stdin.data, Rpc.StatPath(value))
+                    case AgentResponse(Rpc.StatInfo(p, remoteHash)) =>
+                        val localHash = Shared.hashPath(src / p)
+                        if (localHash != remoteHash && localHash.isDefined) {
+                            Shared.send(
+                                agent.stdin.data,
+                                Rpc.WriteOver(os.read.bytes(src / p), p)
+                            )
+                        }
+                }
             }
         }
+
+        val agentReader = new Thread(() => {
+            while (agent.isAlive()) {
+                SyncActor.send(AgentResponse(Shared.receive[Rpc.StatInfo](agent.stdout.data)))
+            }
+        })
+
+        agentReader.start()
+
+        val watcher = os.watch.watch(
+            Seq(src),
+            onEvent = _.foreach(p => SyncActor.send(ChangedPath(p.subRelativeTo(src))))
+        )
+
+        Thread.sleep(Long.MaxValue)
     }
 }
