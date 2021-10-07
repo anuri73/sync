@@ -8,6 +8,9 @@
         <content url="file://$MODULE_DIR$/../sync/resources">
             <sourceFolder url="file://$MODULE_DIR$/../sync/resources" type="java-resource"/>
         </content>
+        <content url="file://$MODULE_DIR$/../out/sync/resources/dest">
+            <sourceFolder url="file://$MODULE_DIR$/../out/sync/resources/dest" type="java-resource"/>
+        </content>
         <orderEntry type="inheritedJdk"/>
         <orderEntry type="sourceFolder" forTests="false"/>
         <orderEntry type="library" name="scala-sdk-2.13.2" level="application"/>

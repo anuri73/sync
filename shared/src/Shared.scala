@@ -12,7 +12,7 @@ object Shared {
         out.flush()
     }
 
-    def receive[T: Reader](in: DataInputStream): Unit = {
+    def receive[T: Reader](in: DataInputStream): T = {
         val buf = new Array[Byte](in.readInt())
         in.readFully(buf)
         upickle.default.readBinary[T](buf)
