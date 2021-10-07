@@ -10,7 +10,7 @@ object Sync {
 
         sealed trait Message
         case class ChangedPath(value: os.SubPath) extends Message
-        case class AgentResponse(value: Rpc.StatInfo) extends Message
+        case class HashStatInfo(localHash: Option[Int], value: Rpc.StatInfo) extends Message
 
         import castor.Context.Simple.global
 
@@ -19,8 +19,7 @@ object Sync {
                 println("Sync actor handling: ", message)
                 message match {
                     case ChangedPath(value) => Shared.send(agent.stdin.data, Rpc.StatPath(value))
-                    case AgentResponse(Rpc.StatInfo(p, remoteHash)) =>
-                        val localHash = Shared.hashPath(src / p)
+                    case HashStatInfo(localHash, Rpc.StatInfo(p, remoteHash)) =>
                         if (localHash != remoteHash && localHash.isDefined) {
                             Shared.send(
                                 agent.stdin.data,
@@ -31,9 +30,17 @@ object Sync {
             }
         }
 
+        object HashActor extends castor.SimpleActor[Rpc.StatInfo] {
+            def run(message: Rpc.StatInfo): Unit = {
+                println("Hash actor handling: ", message)
+                val localHash = Shared.hashPath(src / message.p)
+                SyncActor.send(HashStatInfo(localHash, message))
+            }
+        }
+
         val agentReader = new Thread(() => {
             while (agent.isAlive()) {
-                SyncActor.send(AgentResponse(Shared.receive[Rpc.StatInfo](agent.stdout.data)))
+                HashActor.send(Shared.receive[Rpc.StatInfo](agent.stdout.data))
             }
         })
 
