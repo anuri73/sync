@@ -9,27 +9,34 @@ object Sync {
         os.perms.set(agentExecutable, "rwx------")
         val agent = os.proc(agentExecutable).spawn(cwd = dest)
 
-        def callAgent[T: upickle.default.Reader](rpc: Rpc): T = {
+        def callAgent[T: upickle.default.Reader](rpc: Rpc): () => T = {
             Shared.send(agent.stdin.data, rpc)
-            Shared.receive[T](agent.stdout.data)
+            () => Shared.receive[T](agent.stdout.data)
         }
 
-        for (srcSubPath <- os.walk(src)) {
-            val subPath = srcSubPath.subRelativeTo(src)
-            val destSubPath = dest / subPath
-            (os.isDir(srcSubPath), callAgent[Boolean](Rpc.IsDir(subPath))) match {
-                case (false, true) => callAgent[Unit](Rpc.WriteOver(os.read.bytes(srcSubPath), subPath))
-                case (true, false) =>
-                    for (p <- os.walk(srcSubPath) if os.isFile(p)) {
-                        callAgent[Unit](Rpc.WriteOver(os.read.bytes(p), p.subRelativeTo(src)))
-                    }
-                case (false, false)
-                    if !callAgent[Boolean](Rpc.Exists(subPath))
-                        || !os.read.bytes(srcSubPath).sameElements(
-                        callAgent[Array[Byte]](Rpc.ReadBytes(subPath))
-                    ) => callAgent[Unit](Rpc.WriteOver(os.read.bytes(srcSubPath), subPath))
+        val subPaths = os.walk(src).map(_.subRelativeTo(src))
 
-                case _ => // do nothing
+        def pipelineCalls[T: upickle.default.Reader](rpcFor: os.SubPath => Option[Rpc]) = {
+            val buffer = collection.mutable.Buffer.empty[(os.RelPath, () => T)]
+            for (p <- subPaths; rpc <- rpcFor(p)) buffer.append((p, callAgent[T](rpc)))
+            buffer.map { case (k, v) => (k, v()) }.toMap
+        }
+
+        val existsMap = pipelineCalls[Boolean](p => Some(Rpc.Exists(p)))
+
+        val isDirMap = pipelineCalls[Boolean](p => Some(Rpc.IsDir(p)))
+
+        val readMap = pipelineCalls[Array[Byte]](p =>
+            if (existsMap(p) && !isDirMap(p)) Some(Rpc.ReadBytes(p))
+            else None
+        )
+
+        pipelineCalls[Unit] { p =>
+            if (os.isDir(src / p)) None
+            else {
+                val localBytes = os.read.bytes(src / p)
+                if (readMap.get(p).exists(java.util.Arrays.equals(_, localBytes))) None
+                else Some(Rpc.WriteOver(localBytes, p))
             }
         }
     }
